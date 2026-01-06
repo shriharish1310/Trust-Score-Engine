@@ -1,0 +1,18 @@
+{
+    "manifest_version": 3,
+    "name": "URL Trust Scorer (Local)",
+    "version": "0.1",
+    "description": "Scores the current tab URL using a local FastAPI trust scoring service.",
+    "action": {
+        "default_popup": "popup.html",
+        "default_title": "URL Trust Score"
+    },
+    "permissions": [
+        "tabs",
+        "activeTab"
+    ],
+    "host_permissions": [
+        "http://127.0.0.1:8000/*",
+        "http://localhost:8000/*"
+    ]
+}

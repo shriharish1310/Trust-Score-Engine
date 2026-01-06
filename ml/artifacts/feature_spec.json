@@ -1,0 +1,22 @@
+{
+  "feature_names": [
+    "url_len",
+    "host_len",
+    "path_len",
+    "query_len",
+    "num_dots",
+    "num_digits",
+    "num_special",
+    "num_params",
+    "has_ip_host",
+    "uses_https",
+    "has_at_symbol",
+    "has_double_slash_in_path",
+    "num_subdomains",
+    "tld_len",
+    "host_entropy",
+    "path_entropy",
+    "suspicious_token_count",
+    "is_shortener"
+  ]
+}

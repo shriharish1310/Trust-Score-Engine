@@ -1,0 +1,40 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title>URL Trust Scorer</title>
+    <link rel="stylesheet" href="popup.css" />
+</head>
+
+<body>
+    <div class="wrap">
+        <h2>URL Trust Scorer</h2>
+
+        <div class="row">
+            <div class="label">URL</div>
+            <div id="url" class="mono small">Loading...</div>
+        </div>
+
+        <div class="row">
+            <div class="label">Verdict</div>
+            <div id="verdict" class="pill">—</div>
+        </div>
+
+        <div class="row">
+            <div class="label">Trust Score</div>
+            <div id="score" class="big">—</div>
+        </div>
+
+        <div class="row">
+            <div class="label">Reasons</div>
+            <ul id="reasons" class="reasons"></ul>
+        </div>
+
+        <div id="status" class="status"></div>
+    </div>
+
+    <script src="popup.js"></script>
+</body>
+
+</html>
