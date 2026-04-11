@@ -13,7 +13,7 @@ class RuleHit:
     message: str
 
 
-# High-confidence malware-ish file endings often seen in URLhaus-style URLs
+# High-confidence malware-ish file endings 
 SUSPICIOUS_EXTS = (
     ".sh", ".exe", ".ps1", ".bat", ".cmd", ".js", ".vbs", ".scr", ".msi",
     ".apk", ".jar", ".zip", ".rar", ".7z"

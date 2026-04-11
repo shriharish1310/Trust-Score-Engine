@@ -6,6 +6,8 @@ from urllib.parse import urlparse, unquote
 
 import tldextract
 
+from .content_features import extract_content_features, CONTENT_SPEC
+from .infrastructure import INFRA_SPEC, extract_infra_features
 
 SUSPICIOUS_TOKENS = [
     "login", "verify", "update", "secure", "account", "bank", "signin",
@@ -14,6 +16,11 @@ SUSPICIOUS_TOKENS = [
 
 SHORTENER_DOMAINS = {
     "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd", "buff.ly"
+}
+
+COMMON_TLDS = {
+    "com", "org", "net", "edu", "gov", "mil",
+    "io", "ai", "co", "us", "uk", "in", "de", "fr", "jp", "ca", "au"
 }
 
 
@@ -37,8 +44,8 @@ def _count_regex(pattern: str, s: str) -> int:
 
 @dataclass(frozen=True)
 class FeatureSpec:
-    # Keep order stable; model depends on it
     names: tuple[str, ...] = (
+        # existing
         "url_len",
         "host_len",
         "path_len",
@@ -57,24 +64,56 @@ class FeatureSpec:
         "path_entropy",
         "suspicious_token_count",
         "is_shortener",
+
+        # NEW: domain-leve
+        "registered_domain_len",
+        "domain_len",
+        "subdomain_len",
+        "num_hyphens_host",
+        "num_digits_host",
+        "is_punycode",
+        "tld_in_top",
+
+        # content + relationship
+        *CONTENT_SPEC.names,
+
+        # WHOIS age, DNS TTL, TLS certificate
+        *INFRA_SPEC.names,
+
+        # graph / metadata degrees
+        "graph_ip_degree",
+        "graph_asn_degree",
+        "graph_ssl_issuer_degree",
+        "graph_brand_degree",
     )
 
 
 SPEC = FeatureSpec()
 
 
-def extract_features(url: str) -> dict[str, float]:
+def extract_features(
+    url: str,
+    html: str | None = None,
+    js_texts: list[str] | None = None,
+    metadata: dict | None = None,
+) -> dict[str, float]:
     url = url.strip()
     if not (url.startswith("http://") or url.startswith("https://")):
-        # Treat missing scheme as http (common user input)
         url = "http://" + url
 
-    parsed = urlparse(url)
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        # Malformed IPv6 / broken URL. Return zeros so training can continue.
+        return {name: 0.0 for name in SPEC.names}
     host = (parsed.netloc or "").lower()
     path = unquote(parsed.path or "")
     query = parsed.query or ""
 
-    ext = tldextract.extract(host)
+    try:
+        ext = tldextract.extract(host)
+    except Exception:
+        ext = tldextract.extract("")
     registered = ".".join([p for p in [ext.domain, ext.suffix] if p])
 
     # Basic counts
@@ -108,6 +147,21 @@ def extract_features(url: str) -> dict[str, float]:
 
     is_shortener = 1.0 if (registered in SHORTENER_DOMAINS) else 0.0
 
+    # New Features
+    registered_domain_len = float(len(registered))
+    domain_len = float(len(ext.domain or ""))
+    subdomain_len = float(len(ext.subdomain or ""))
+
+    host_no_port = host.split(":")[0]
+    num_hyphens_host = float(host_no_port.count("-"))
+    num_digits_host = float(_count_regex(r"\d", host_no_port))
+
+    is_punycode = 1.0 if "xn--" in host_no_port else 0.0
+
+    tld = (ext.suffix or "").lower()
+    tld_in_top = 1.0 if (tld in COMMON_TLDS) else 0.0
+
+
     feats = {
         "url_len": url_len,
         "host_len": host_len,
@@ -127,12 +181,46 @@ def extract_features(url: str) -> dict[str, float]:
         "path_entropy": path_entropy,
         "suspicious_token_count": suspicious_token_count,
         "is_shortener": is_shortener,
+
+        "registered_domain_len": registered_domain_len,
+        "domain_len": domain_len,
+        "subdomain_len": subdomain_len,
+        "num_hyphens_host": num_hyphens_host,
+        "num_digits_host": num_digits_host,
+        "is_punycode": is_punycode,
+        "tld_in_top": tld_in_top,
     }
 
-    # Ensure spec completeness + order
+    meta = metadata or {}
+    content_feats = extract_content_features(
+        url,
+        html=html,
+        js_texts=js_texts,
+        brand=str(meta.get("brand", "")) if meta.get("brand") is not None else None,
+    )
+    feats.update(content_feats)
+
+    feats.update(extract_infra_features(meta))
+
+    feats.update(
+        {
+            "graph_ip_degree": float(meta.get("ip_degree", 0.0)),
+            "graph_asn_degree": float(meta.get("asn_degree", 0.0)),
+            "graph_ssl_issuer_degree": float(meta.get("ssl_issuer_degree", 0.0)),
+            "graph_brand_degree": float(meta.get("brand_degree", 0.0)),
+        }
+    )
+
     return {name: float(feats.get(name, 0.0)) for name in SPEC.names}
 
 
-def vectorize(url: str) -> list[float]:
-    f = extract_features(url)
-    return [f[name] for name in SPEC.names]
+def vectorize(
+    url: str,
+    html: str | None = None,
+    js_texts: list[str] | None = None,
+    metadata: dict | None = None,
+    feature_names: list[str] | None = None,
+) -> list[float]:
+    f = extract_features(url, html=html, js_texts=js_texts, metadata=metadata)
+    names = feature_names or list(SPEC.names)
+    return [f.get(name, 0.0) for name in names]

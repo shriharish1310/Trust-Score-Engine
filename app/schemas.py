@@ -1,4 +1,4 @@
-from pydantic import BaseModel, HttpUrl, Field
+from pydantic import BaseModel, Field
 
 
 class ScoreRequest(BaseModel):
@@ -9,6 +9,8 @@ class ScoreResponse(BaseModel):
     url: str
     trust_score: int
     verdict: str
+    predicted_class: str
+    class_probabilities: dict
     risk: dict
     reasons: list[dict]
     feature_names: list[str]
