@@ -1,57 +1,64 @@
 # URL Trust Scorer
 
-URL Trust Scorer is a local URL threat-scanning prototype. It combines URL lexical features, rule-based heuristics, a trained ML model, and novelty signals into a single trust score for browser, CLI, and API workflows.
+URL Trust Scorer is a local phishing and malicious URL detection prototype. It takes a URL, analyzes it through multiple security signals, and returns a trust score, verdict, risk breakdown, and human-readable reasons.
 
-The project is research-oriented and designed to run locally. It does not call commercial safe-browsing APIs by default.
+The project is designed to run locally and reproducibly. It does not require paid threat-intelligence APIs.
 
-## Features
+## What It Does
 
-- URL canonicalization and lexical feature extraction.
-- Rule-based security heuristics with explainable reasons.
-- ML-backed phishing probability from saved model artifacts.
-- Multi-signal scan output with per-signal risk and score.
-- Local dataset reputation from URLhaus exact malicious URLs and Tranco benign domains.
-- Equal-weight evidence aggregation so the ML model is one layer, not the dominant decision maker.
-- Novelty signals:
-  - Homograph and brand-impersonation risk.
-  - Temporal trust-drift risk.
-- FastAPI endpoints for single scans, streaming scans, batch scans, and health checks.
-- Scrutinix-compatible streaming aliases: `/api/analyze` and `/api/analyze/batch`.
-- Swagger-friendly JSON result aliases: `/scan/result`, `/api/analyze/result`, and `/api/analyze/batch/result`.
-- Chrome extension popup for active-tab scans, manual URL scans, signal details, and batch scans.
+- Extracts URL and domain-level features.
+- Uses a trained LightGBM model to estimate phishing probability.
+- Applies rule-based security heuristics for explainable warnings.
+- Uses local reputation evidence from URLhaus and Tranco.
+- Combines evidence layers with equal weighting instead of letting ML dominate.
+- Adds novelty signals for homograph/brand impersonation and temporal trust drift.
+- Provides a FastAPI backend, CLI scanner, batch scanning, and optional Chrome extension.
 
 ## Project Structure
 
 ```text
 .
 |-- app/
-|   |-- main.py              # FastAPI entry point
-|   |-- schemas.py           # Request / response schemas
+|   |-- main.py              # FastAPI app and API routes
+|   |-- schemas.py           # Request/response schemas
 |   `-- core/
-|       |-- features.py      # URL feature extraction
-|       |-- rules.py         # Heuristic penalty rules
-|       |-- model.py         # Scoring logic and ML integration
+|       |-- features.py      # URL and domain feature extraction
+|       |-- rules.py         # Heuristic rules
+|       |-- model.py         # Model loading and scoring logic
+|       |-- reputation.py    # Local URLhaus/Tranco reputation checks
 |       |-- novelty.py       # Homograph and temporal drift signals
 |       `-- scan_engine.py   # Multi-signal scan orchestration
 |
 |-- ml/
-|   |-- download_datasets.py # URLhaus + Tranco downloader
-|   |-- prepare_data.py      # Dataset preparation
-|   |-- train.py             # Model training
-|   |-- evaluate.py          # Model evaluation
-|   |-- artifacts/           # Saved model and feature spec
-|   `-- data/                # Local datasets
+|   |-- download_datasets.py # Downloads URLhaus + Tranco data
+|   |-- train.py             # Trains the LightGBM model
+|   |-- check_accuracy.py    # Reproducible evaluation script
+|   |-- feature_importance.py
+|   |-- artifacts/           # Saved model and feature metadata
+|   `-- data/                # Training dataset
 |
 |-- scripts/
-|   `-- score_url.py         # CLI scoring helper
+|   `-- score_url.py         # Terminal URL scanner
 |
-|-- trust-score-extension/   # Chrome extension popup
+|-- tests/                   # Pytest tests
+|-- trust-score-extension/   # Optional Chrome extension
 `-- README.md
 ```
 
-## Setup
+## Environment
 
-Use Python 3.10 or newer. The current project was tested on Windows with Python 3.10.11, but the commands also work on macOS/Linux with the shell syntax adjusted where needed.
+Tested environment:
+
+```text
+OS: Windows
+Python: 3.10.11
+API framework: FastAPI
+Model: LightGBM
+```
+
+Python 3.10 or newer is recommended.
+
+## Setup
 
 Create and activate a virtual environment:
 
@@ -62,24 +69,173 @@ python -m venv .venv
 
 Install dependencies:
 
-```bash
+```powershell
 pip install -r requirements.txt
 ```
 
-The repository includes the current reproducibility artifacts:
+The repository already includes the main reproducibility artifacts:
 
-- `ml/data/urls.csv`
-- `ml/artifacts/model.joblib`
-- `ml/artifacts/feature_spec.json`
-- `ml/artifacts/feature_importance.csv`
+```text
+ml/data/urls.csv
+ml/artifacts/model.joblib
+ml/artifacts/feature_spec.json
+ml/artifacts/feature_importance.csv
+```
 
-You can run immediately with those checked-in artifacts. To rebuild the dataset and model from public sources, run:
+So you can run the project immediately after installing dependencies.
 
-```bash
+## Run the API
+
+Start the local backend:
+
+```powershell
+$env:FETCH_CONTENT="1"
+$env:FETCH_INFRA="1"
+$env:FETCH_EXTERNAL_JS="1"
+uvicorn app.main:app --host 127.0.0.1 --port 8000
+```
+
+Open the API docs:
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Health check:
+
+```text
+http://127.0.0.1:8000/health
+```
+
+Expected response:
+
+```json
+{ "ok": true }
+```
+
+## Scan a URL
+
+Use the CLI:
+
+```powershell
+python scripts\score_url.py https://www.chess.com/home --host http://127.0.0.1:8000
+```
+
+Interactive mode:
+
+```powershell
+python scripts\score_url.py --host http://127.0.0.1:8000
+```
+
+Paste a URL at the prompt. Type `q` to quit.
+
+## Main API Endpoints
+
+### Score One URL
+
+```http
+POST /score
+Content-Type: application/json
+
+{ "url": "https://example.com" }
+```
+
+Returns a JSON score result with verdict, trust score, risk values, reasons, and feature names.
+
+### Scan One URL With Full Signals
+
+For Swagger or simple JSON testing:
+
+```http
+POST /scan/result
+Content-Type: application/json
+
+{ "url": "https://example.com" }
+```
+
+For streaming scan progress:
+
+```http
+POST /scan
+Content-Type: application/json
+
+{ "url": "https://example.com" }
+```
+
+`/scan` returns newline-delimited JSON events:
+
+```text
+scan_started
+signal_result
+scan_complete
+```
+
+Use `/scan/result` if you want one normal JSON response.
+
+### Batch Scan
+
+```http
+POST /scan/batch
+Content-Type: application/json
+
+{
+  "urls": [
+    "https://example.com",
+    "https://github.com"
+  ]
+}
+```
+
+Batch scan accepts up to 100 URLs.
+
+## Example Output
+
+```text
+=== URL Trust Scorer ===
+URL          : https://chess.com/home
+Verdict      : SAFE
+Trust score  : 67/100
+Prediction   : benign
+Final risk   : 0.333
+ML risk      : 1.000
+Raw ML risk  : 1.000
+
+Reasons:
+- Registered domain appears in the local Tranco benign-domain dataset.
+```
+
+This example shows why the system uses multiple evidence layers. The ML model may be suspicious, but clean heuristic and reputation layers can reduce the final risk.
+
+## Dataset
+
+The checked-in dataset contains:
+
+```text
+Total rows : 76,195
+Benign     : 50,000
+Phishing   : 26,195
+```
+
+Data sources:
+
+- URLhaus recent malicious URL feed
+- Tranco top domains
+
+To rebuild the dataset:
+
+```powershell
 python -m ml.download_datasets --malicious-limit 50000 --benign-limit 50000
 ```
 
-Then retrain with the same pruned feature set used by the checked-in model:
+The downloader writes:
+
+```text
+ml/data/urls.csv
+```
+
+## Train the Model
+
+Retrain using the same pruned feature set used by the checked-in model:
 
 ```powershell
 $env:TRAIN_FEATURES='host_entropy,path_len,url_len,num_subdomains,num_special,tld_len,tld_in_top,path_entropy,registered_domain_len,uses_https,domain_len,host_len,subdomain_len,num_hyphens_host,num_digits,num_dots'
@@ -87,15 +243,23 @@ python -m ml.train
 Remove-Item Env:\TRAIN_FEATURES
 ```
 
-On macOS/Linux:
+The trained model is saved to:
 
-```bash
-TRAIN_FEATURES='host_entropy,path_len,url_len,num_subdomains,num_special,tld_len,tld_in_top,path_entropy,registered_domain_len,uses_https,domain_len,host_len,subdomain_len,num_hyphens_host,num_digits,num_dots' python -m ml.train
+```text
+ml/artifacts/model.joblib
 ```
+
+The selected feature list is saved to:
+
+```text
+ml/artifacts/feature_spec.json
+```
+
+## Evaluate the Model
 
 Run the stricter reproducible evaluation:
 
-```bash
+```powershell
 python -m ml.check_accuracy
 ```
 
@@ -111,280 +275,63 @@ F1        : about 0.887
 ROC-AUC   : about 0.969
 ```
 
-The intentionally inflated random-split baseline is still available for comparison:
+The stricter evaluation removes raw IP-host shortcut rows, uses domain-level splitting, uses host-only features, and reports on a balanced test set. This gives a more meaningful result than a simple random split.
 
-```bash
+To reproduce the easier random-split baseline:
+
+```powershell
 python -m ml.check_accuracy --easy-random
 ```
 
-Run automated tests:
-
-```bash
-python -m pytest
-```
-
-Start the local API:
+## Run Tests
 
 ```powershell
-$env:FETCH_CONTENT="1"
-$env:FETCH_INFRA="1"
-$env:FETCH_EXTERNAL_JS="1"
-uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-The API defaults to `http://127.0.0.1:8000`.
-
-Open Swagger UI:
-
-```text
-http://127.0.0.1:8000/docs
-```
-
-Use `/scan/result` or `/api/analyze/result` in Swagger when you want one parseable JSON object. The `/scan` and `/api/analyze` endpoints return newline-delimited streaming events (`application/x-ndjson`).
-
-## API
-
-### Health
-
-```http
-GET /health
-```
-
-Returns:
-
-```json
-{ "ok": true }
-```
-
-### Legacy Score
-
-```http
-POST /score
-Content-Type: application/json
-
-{ "url": "https://example.com" }
-```
-
-Returns the base scoring envelope.
-
-### Streaming Scan
-
-```http
-POST /scan
-Content-Type: application/json
-
-{ "url": "https://example.com" }
-```
-
-Returns newline-delimited JSON (`application/x-ndjson`), not one JSON object. This is useful for live progress in a UI, but Swagger may show it as raw lines.
-
-- `scan_started`
-- `signal_result`
-- `scan_complete`
-
-For Swagger UI testing, use the single-object JSON endpoint instead:
-
-```http
-POST /scan/result
-Content-Type: application/json
-
-{ "url": "https://example.com" }
-```
-
-Example final result shape:
-
-```json
-{
-  "product_name": "URL Trust Scorer",
-  "url": "https://example.com",
-  "trust_score": 92,
-  "verdict": "SAFE",
-  "risk": {
-    "final": 0.08,
-    "base": 0.08,
-    "ml": 0.04,
-    "heuristic": 0.0,
-    "homograph_brand": 0.0,
-    "temporal_drift": 0.0,
-    "high_trust_allowlist": 0.0
-  },
-  "signals": [
-    {
-      "name": "lexical_ml",
-      "risk": 0.04,
-      "score": 96,
-      "detail": "LightGBM phishing probability from extracted URL/content/infra features."
-    }
-  ],
-  "reasons": []
-}
-```
-
-### Batch Scan
-
-```http
-POST /scan/batch
-Content-Type: application/json
-
-{
-  "urls": [
-    "https://example.com",
-    "https://login.example.test"
-  ]
-}
-```
-
-Batch requests accept up to 100 URLs.
-
-### Scrutinix-Compatible Single Scan
-
-```http
-POST /api/analyze
-Content-Type: application/json
-
-{ "url": "https://example.com" }
-```
-
-Returns Scrutinix-style newline-delimited JSON events (`application/x-ndjson`) with a `type` field:
-
-- `scan_started`
-- `signal_result`
-- `scan_complete`
-- `scan_error` for unexpected failures
-
-The final `scan_complete.result` contains Scrutinix-style `verdict`, `signals`, `threatInfo`, and `metadata` fields, plus `raw` with the native URL Trust Scorer scan envelope.
-
-For Swagger UI testing, use:
-
-```http
-POST /api/analyze/result
-Content-Type: application/json
-
-{ "url": "https://example.com" }
-```
-
-### Scrutinix-Compatible Batch Scan
-
-```http
-POST /api/analyze/batch
-Content-Type: application/json
-
-{
-  "urls": [
-    "https://example.com",
-    "https://github.com"
-  ]
-}
-```
-
-Returns streamed batch events:
-
-- `batch_started`
-- `url_started`
-- `url_complete`
-- `batch_complete`
-
-This endpoint follows Scrutinix's smaller batch limit of 10 URLs.
-
-For Swagger UI testing, use the JSON batch result endpoint:
-
-```http
-POST /api/analyze/batch/result
-Content-Type: application/json
-
-{
-  "urls": [
-    "https://example.com",
-    "https://github.com"
-  ]
-}
-```
-
-## Chrome Extension
-
-1. Start the API with `uvicorn app.main:app --reload`.
-2. Open Chrome and go to `chrome://extensions/`.
-3. Enable Developer mode.
-4. Choose Load unpacked and select `trust-score-extension/`.
-5. Open the popup from the toolbar.
-
-The popup can scan the active tab, scan a manually entered URL, or run a newline-separated batch scan.
-
-## Dataset Refresh
-
-The downloader uses:
-
-- URLhaus recent malicious URL feed: `https://urlhaus.abuse.ch/downloads/csv_recent/`
-- Tranco top domains: `https://tranco-list.eu/top-1m.csv.zip`
-
-It writes raw downloads to `ml/data/raw/` and the training CSV to `ml/data/urls.csv`.
-
-```bash
-python -m ml.download_datasets --malicious-limit 50000 --benign-limit 50000
-python -m ml.train
-python -m ml.feature_importance --top 30
 python -m pytest
 ```
 
-URLhaus labels are mapped into the existing binary malicious/phishing training class because the current model is binary.
+Expected result:
 
-At runtime, URL Trust Scorer also uses the downloaded dataset as reputation evidence:
+```text
+18 passed
+```
 
-- Exact URL match in the malicious dataset raises risk.
-- Registered-domain match in the Tranco benign set can reduce false positives only when no heuristic danger fires.
-- Heuristic danger still wins over benign-domain reputation for suspicious subdomains or paths.
+## Scoring Logic
 
-## Scoring Model
+The final risk score is built from multiple evidence layers:
 
-The final verdict uses equal-weight evidence fusion over the available decision layers:
+- ML lexical/domain risk
+- heuristic rule risk
+- dataset reputation risk
+- high-trust allowlist evidence
+- homograph/brand impersonation risk
+- temporal trust drift risk
 
-- Lexical ML risk.
-- Heuristic rule risk.
-- Dataset reputation when an exact malicious URL or known benign registered domain is available.
-- High-trust allowlist when the registered domain is a major provider.
-
-This replaces the earlier ML-heavy blend. The ML model is now treated as one evidence layer instead of the primary decision layer. If the ML model overfits on URL shape but reputation and rules are clean, those layers can counterbalance it.
+The final system uses equal-weight evidence fusion. This prevents the ML model from being the only decision maker.
 
 Example:
 
 ```text
 https://www.chess.com/home
-ML layer: high risk
+
+ML layer: suspicious
 Heuristic layer: clean
-Dataset reputation layer: clean benign domain
-Final: SAFE, but lower-confidence score
+Dataset reputation layer: known benign domain
+Final verdict: SAFE
 ```
 
-The current trained model uses only the non-zero-importance feature set saved in `ml/artifacts/feature_spec.json`. To retrain with the same pruned set:
+## Optional Chrome Extension
 
-```powershell
-$env:TRAIN_FEATURES='host_entropy,path_len,url_len,num_subdomains,num_special,tld_len,tld_in_top,path_entropy,registered_domain_len,uses_https,domain_len,host_len,subdomain_len,num_hyphens_host,num_digits,num_dots'
-python -m ml.train
-Remove-Item Env:\TRAIN_FEATURES
-```
+1. Start the API on `http://127.0.0.1:8000`.
+2. Open Chrome and go to `chrome://extensions/`.
+3. Enable Developer mode.
+4. Click Load unpacked.
+5. Select the `trust-score-extension/` folder.
 
-## CLI
-
-Score a single URL from the terminal:
-
-```bash
-python scripts/score_url.py https://example.com
-```
-
-Or run the interactive terminal scanner:
-
-```bash
-python scripts/score_url.py
-```
-
-Paste a URL at the `URL>` prompt. Type `q` to quit. Add `--json` to print the full API response:
-
-```bash
-python scripts/score_url.py https://google.com --json
-```
+The extension can scan the active tab, scan a manually entered URL, and show signal details.
 
 ## Notes
 
-- The prototype intentionally focuses on local URL and lightweight infrastructure signals.
-- Scrutinix-style external providers such as VirusTotal and Google Safe Browsing are represented by local equivalents unless API-key integrations are added.
-- The Chrome extension expects the local API at `http://127.0.0.1:8000`.
+- This is a local research prototype, not a production security gateway.
+- The model is binary: benign vs phishing/malicious.
+- The project does not require VirusTotal, Google Safe Browsing, or other paid/commercial APIs.
+- Content and infrastructure fetching can be enabled through environment variables, but URL/domain scoring works with the included model artifacts.
