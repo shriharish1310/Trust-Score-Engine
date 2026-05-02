@@ -1,11 +1,11 @@
 {
     "manifest_version": 3,
-    "name": "URL Trust Scorer (Local)",
-    "version": "0.1",
-    "description": "Scores the current tab URL using a local FastAPI trust scoring service.",
+    "name": "URL Trust Scorer",
+    "version": "0.2",
+    "description": "Runs multi-signal URL threat scans using the local URL Trust Scorer API.",
     "action": {
         "default_popup": "popup.html",
-        "default_title": "URL Trust Score"
+        "default_title": "URL Trust Scorer"
     },
     "permissions": [
         "tabs",

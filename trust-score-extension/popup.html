@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="en">
 
 <head>
     <meta charset="utf-8" />
@@ -8,31 +8,74 @@
 </head>
 
 <body>
-    <div class="wrap">
-        <h2>URL Trust Scorer</h2>
+    <main class="shell">
+        <header class="topbar">
+            <div>
+                <div class="eyebrow">URL Trust Scorer</div>
+                <h1>Threat scan</h1>
+            </div>
+            <div id="service" class="service">Local API</div>
+        </header>
 
-        <div class="row">
-            <div class="label">URL</div>
-            <div id="url" class="mono small">Loading...</div>
-        </div>
+        <section class="scan-panel">
+            <label for="urlInput">URL</label>
+            <div class="input-row">
+                <input id="urlInput" type="url" spellcheck="false" placeholder="https://example.com" />
+                <button id="scanButton" type="button">Scan</button>
+            </div>
+            <div class="actions">
+                <button id="activeTabButton" type="button">Use current tab</button>
+                <button id="batchButton" type="button">Batch</button>
+            </div>
+        </section>
 
-        <div class="row">
-            <div class="label">Verdict</div>
-            <div id="verdict" class="pill">—</div>
-        </div>
+        <section id="batchPanel" class="batch-panel hidden">
+            <label for="batchInput">Batch URLs</label>
+            <textarea id="batchInput" rows="4" spellcheck="false" placeholder="One URL per line"></textarea>
+            <button id="runBatchButton" type="button">Scan batch</button>
+        </section>
 
-        <div class="row">
-            <div class="label">Trust Score</div>
-            <div id="score" class="big">—</div>
-        </div>
+        <section class="summary">
+            <div>
+                <div class="label">Verdict</div>
+                <div id="verdict" class="verdict neutral">Waiting</div>
+            </div>
+            <div>
+                <div class="label">Trust score</div>
+                <div id="score" class="score">--</div>
+            </div>
+            <div>
+                <div class="label">Risk</div>
+                <div id="risk" class="risk">--</div>
+            </div>
+        </section>
 
-        <div class="row">
-            <div class="label">Reasons</div>
+        <section>
+            <div class="section-head">
+                <h2>Signals</h2>
+                <span id="signalCount">0</span>
+            </div>
+            <div id="signals" class="signals"></div>
+        </section>
+
+        <section>
+            <div class="section-head">
+                <h2>Reasons</h2>
+                <span id="reasonCount">0</span>
+            </div>
             <ul id="reasons" class="reasons"></ul>
-        </div>
+        </section>
+
+        <section id="batchResults" class="batch-results hidden">
+            <div class="section-head">
+                <h2>Batch results</h2>
+                <span id="batchCount">0</span>
+            </div>
+            <div id="batchList" class="batch-list"></div>
+        </section>
 
         <div id="status" class="status"></div>
-    </div>
+    </main>
 
     <script src="popup.js"></script>
 </body>

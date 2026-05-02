@@ -12,6 +12,7 @@ from ..config import high_trust_domain_set, settings
 from .content_fetch import fetch_content
 from .features import vectorize, SPEC
 from .infrastructure import fetch_infrastructure
+from .reputation import dataset_reputation
 from .rules import heuristic_risk
 
 ARTIFACT_DIR = Path(__file__).resolve().parents[2] / "ml" / "artifacts"
@@ -21,6 +22,33 @@ SPEC_PATH = ARTIFACT_DIR / "feature_spec.json"
 LABELS = ["benign", "phishing"]
 BENIGN_LABEL = "benign"
 PHISHING_LABEL = "phishing"
+
+
+def _clamp_risk(value: float) -> float:
+    return max(0.0, min(1.0, float(value)))
+
+
+def _verdict_from_risk(risk: float) -> tuple[int, str]:
+    trust_score = int(round(100 * (1.0 - _clamp_risk(risk))))
+    if trust_score >= 65:
+        return trust_score, "SAFE"
+    if trust_score >= 40:
+        return trust_score, "SUSPICIOUS"
+    return trust_score, "DANGEROUS"
+
+
+def _hostname(url: str) -> str:
+    try:
+        return (urlparse(url if "://" in url else "http://" + url).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _equal_weight_average(layers: list[dict]) -> float:
+    active = [layer for layer in layers if layer.get("included")]
+    if not active:
+        return 0.5
+    return _clamp_risk(sum(float(layer["risk"]) for layer in active) / len(active))
 
 
 def canonicalize_url(url: str) -> str:
@@ -46,11 +74,13 @@ def canonicalize_url(url: str) -> str:
     else:
         netloc = f"{host}:{port}"
 
-    path = p.path or "/"
-    if path != "/":
+    path = p.path or ""
+    if path and path != "/":
         path = path.rstrip("/")
         if not path:
-            path = "/"
+            path = ""
+    elif path == "/":
+        path = ""
 
     query = ""
     fragment = ""
@@ -142,7 +172,7 @@ class URLTrustModel:
             html = fetched.html
             js_texts = fetched.js_texts
             if fetched.final_url:
-                feature_url = fetched.final_url
+                feature_url = canonicalize_url(fetched.final_url)
 
         metadata: dict = {}
         if settings.fetch_infra:
@@ -156,41 +186,87 @@ class URLTrustModel:
             except Exception:
                 pass
 
-        probs = self.predict_proba(
+        raw_probs = self.predict_proba(
             feature_url,
             html=html,
             js_texts=js_texts,
             metadata=metadata or None,
         )
+        probs = dict(raw_probs)
         predicted_class = max(probs, key=probs.get)
 
         # ML risk: phishing probability
         ml_risk = float(probs.get(PHISHING_LABEL, 0.0))
+        raw_ml_risk = ml_risk
 
         heur_risk, hits = heuristic_risk(url)
-
-        # keep your blend; tune later
-        final_risk = 0.85 * ml_risk + 0.15 * heur_risk
-
-        final_risk = max(0.0, min(1.0, final_risk))
-
-        trust_score = int(round(100 * (1.0 - final_risk)))
-
-        if trust_score >= 70:
-            verdict = "SAFE"
-        elif trust_score >= 40:
-            verdict = "SUSPICIOUS"
-        else:
-            verdict = "DANGEROUS"
+        reputation = dataset_reputation(feature_url)
 
         allowlisted = is_high_trust_url(feature_url)
-        if allowlisted:
-            cap = max(1, min(100, settings.high_trust_score))
-            trust_score = cap
-            final_risk = 1.0 - (cap / 100.0)
-            verdict = "SAFE"
+        host = _hostname(feature_url)
+        rd = str(reputation.get("registered_domain") or "")
+        benign_domain_reputation_applies = (
+            reputation.get("known_benign_domain") is True
+            and reputation.get("exact_malicious") is False
+            and bool(rd)
+            and host == rd
+        )
+        dataset_malicious_match = reputation.get("exact_malicious") is True
+
+        evidence_layers = [
+            {
+                "name": "lexical_ml",
+                "risk": ml_risk,
+                "included": True,
+                "detail": "LightGBM lexical URL classifier risk.",
+            },
+            {
+                "name": "heuristic_rules",
+                "risk": heur_risk,
+                "included": True,
+                "detail": "Rule-based URL risk.",
+            },
+            {
+                "name": "dataset_reputation",
+                "risk": 1.0 if dataset_malicious_match else 0.0,
+                "included": dataset_malicious_match or benign_domain_reputation_applies,
+                "detail": str(reputation.get("detail", "No local reputation evidence.")),
+            },
+            {
+                "name": "high_trust_allowlist",
+                "risk": 0.0,
+                "included": allowlisted,
+                "detail": "Registered domain matched built-in high-trust allowlist.",
+            },
+        ]
+
+        final_risk = _equal_weight_average(evidence_layers)
+        trust_score, verdict = _verdict_from_risk(final_risk)
+        predicted_class = PHISHING_LABEL if final_risk >= 0.5 else BENIGN_LABEL
+        probs = {
+            BENIGN_LABEL: 1.0 - final_risk,
+            PHISHING_LABEL: final_risk,
+        }
 
         reasons = [{"code": h.code, "points": h.points, "message": h.message} for h in hits]
+        if dataset_malicious_match:
+            reasons.insert(
+                0,
+                {
+                    "code": "dataset_malicious_url",
+                    "points": 95,
+                    "message": "Exact URL matches the local malicious URL dataset.",
+                },
+            )
+        elif benign_domain_reputation_applies:
+            reasons.insert(
+                0,
+                {
+                    "code": "dataset_benign_domain",
+                    "points": 0,
+                    "message": "Registered domain appears in the local Tranco benign-domain dataset.",
+                },
+            )
         if allowlisted:
             reasons.insert(
                 0,
@@ -211,9 +287,18 @@ class URLTrustModel:
             "risk": {
                 "final": final_risk,
                 "ml": ml_risk,
+                "raw_ml": raw_ml_risk,
                 "heuristic": heur_risk,
+                "dataset_reputation": float(reputation.get("risk", 0.35)),
+                "dataset_benign_domain": 1.0 if benign_domain_reputation_applies else 0.0,
+                "dataset_malicious_url": 1.0 if reputation.get("exact_malicious") else 0.0,
                 "high_trust_allowlist": 1.0 if allowlisted else 0.0,
             },
+            "aggregation": {
+                "method": "equal_weight_available_layers",
+                "layers": evidence_layers,
+            },
+            "reputation": reputation,
             "feature_names": list(self.feature_names),
             "reasons": reasons,
         }

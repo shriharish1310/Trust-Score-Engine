@@ -1,0 +1,17 @@
+feature,importance,rank
+path_len,281.0,1
+host_entropy,257.0,2
+url_len,141.0,3
+num_subdomains,121.0,4
+tld_len,114.0,5
+tld_in_top,83.0,6
+num_special,81.0,7
+registered_domain_len,51.0,8
+uses_https,42.0,9
+domain_len,38.0,10
+path_entropy,36.0,11
+subdomain_len,17.0,12
+host_len,16.0,13
+num_hyphens_host,16.0,14
+num_digits,4.0,15
+num_dots,3.0,16

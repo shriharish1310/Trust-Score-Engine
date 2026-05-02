@@ -1,1 +1,7 @@
-ml/data/raw/malicious_phish.csv
+.reference/
+__pycache__/
+*.pyc
+ml/data/raw/
+tmp_*
+*.aux
+*.log

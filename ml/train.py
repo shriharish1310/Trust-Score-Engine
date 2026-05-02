@@ -30,6 +30,18 @@ SPEC_PATH = ARTIFACT_DIR / "feature_spec.json"
 BINARY_LABELS = ("benign", "phishing")
 
 
+def _selected_feature_names() -> list[str]:
+    raw = os.getenv("TRAIN_FEATURES", "").strip()
+    if not raw:
+        return list(SPEC.names)
+    names = [name.strip() for name in raw.split(",") if name.strip()]
+    valid = set(SPEC.names)
+    unknown = [name for name in names if name not in valid]
+    if unknown:
+        raise ValueError(f"Unknown TRAIN_FEATURES entries: {', '.join(unknown)}")
+    return names
+
+
 def load_data() -> pd.DataFrame:
     if not DATA_PATH.exists():
         raise FileNotFoundError(
@@ -117,7 +129,7 @@ def _build_degree_maps(df: pd.DataFrame) -> dict[str, pd.Series]:
     return maps
 
 
-def build_xy(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+def build_xy(df: pd.DataFrame, feature_names: list[str] | None = None) -> tuple[np.ndarray, np.ndarray]:
     degree_maps = _build_degree_maps(df)
     base_dir = DATA_PATH.parent
     cols = set(df.columns)
@@ -179,7 +191,7 @@ def build_xy(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         if infra is not None:
             meta["infra"] = infra
 
-        rows.append(vectorize(url, html=html, js_texts=js_texts, metadata=meta))
+        rows.append(vectorize(url, html=html, js_texts=js_texts, metadata=meta, feature_names=feature_names))
 
     X = np.array(rows, dtype=float)
     y = df["label"].to_numpy(dtype=int)
@@ -188,7 +200,8 @@ def build_xy(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
 
 def main() -> None:
     df = load_data()
-    X, y = build_xy(df)
+    feature_names = _selected_feature_names()
+    X, y = build_xy(df, feature_names=feature_names)
 
     stratify_arg = y if (len(y) >= 10 and len(set(y)) > 1) else None
 
@@ -244,7 +257,7 @@ def main() -> None:
     joblib.dump(model, MODEL_PATH)
 
     with open(SPEC_PATH, "w", encoding="utf-8") as f:
-        json.dump({"feature_names": list(SPEC.names)}, f, indent=2)
+        json.dump({"feature_names": feature_names}, f, indent=2)
 
     print("\nSaved model ->", MODEL_PATH)
     print("Saved feature spec ->", SPEC_PATH)

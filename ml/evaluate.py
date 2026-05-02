@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 import os
 import re
+import json
 from urllib.parse import urlparse
 
 import joblib
@@ -17,9 +18,21 @@ from app.core.infrastructure import INFRA_SPEC, fetch_infrastructure
 
 ARTIFACT_DIR = Path(__file__).resolve().parent / "artifacts"
 MODEL_PATH = ARTIFACT_DIR / "model.joblib"
+SPEC_PATH = ARTIFACT_DIR / "feature_spec.json"
 DATA_PATH = Path(__file__).resolve().parent / "data" / "urls.csv"
 
 BINARY_LABELS = ("benign", "phishing")
+
+
+def load_feature_names() -> list[str] | None:
+    if not SPEC_PATH.exists():
+        return None
+    with open(SPEC_PATH, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    names = data.get("feature_names")
+    if isinstance(names, list):
+        return [str(name) for name in names]
+    return None
 
 
 def load_data() -> pd.DataFrame:
@@ -105,7 +118,7 @@ def _build_degree_maps(df: pd.DataFrame) -> dict[str, pd.Series]:
     return maps
 
 
-def build_xy(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
+def build_xy(df: pd.DataFrame, feature_names: list[str] | None = None) -> tuple[np.ndarray, np.ndarray]:
     base_dir = DATA_PATH.parent
     cols = set(df.columns)
     degree_maps = _build_degree_maps(df)
@@ -167,7 +180,7 @@ def build_xy(df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
         if infra is not None:
             meta["infra"] = infra
 
-        rows.append(vectorize(url, html=html, js_texts=js_texts, metadata=meta))
+        rows.append(vectorize(url, html=html, js_texts=js_texts, metadata=meta, feature_names=feature_names))
 
     X = np.array(rows, dtype=float)
     y = df["label"].to_numpy(dtype=int)
@@ -179,7 +192,8 @@ def main() -> None:
         raise FileNotFoundError(f"Model not found at {MODEL_PATH}. Train first: python -m ml.train")
 
     df = load_data()
-    X, y = build_xy(df)
+    feature_names = load_feature_names()
+    X, y = build_xy(df, feature_names=feature_names)
 
     model = joblib.load(MODEL_PATH)
     proba = model.predict_proba(X)[:, 1]
